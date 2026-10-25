@@ -4,7 +4,7 @@
 #include <WebServer.h>
 
 // =====================================================
-// ESP32-C3 + MPU6050 + Clean Modern UI/UX Dashboard
+// ESP32-C3 + MPU6050 + Clean Modern UI/UX Dashboard (Tanpa Motor)
 // SDA = GPIO 6, SCL = GPIO 7
 // Sensor Address = 0x68
 // =====================================================
@@ -21,16 +21,16 @@ const int PIN_LED_KUNING = 1;
 const int PIN_LED_HIJAU  = 3;
 
 // Ambang batas
-const float BATAS_SUDUT_POSTUR = 28.0f;  
-const float BATAS_GYRO_DPS = 30.0f;      
-const float BATAS_GERAK_ACCEL_G = 0.45f; 
+const float BATAS_SUDUT_POSTUR = 40.0f;  
+const float BATAS_GYRO_DPS = 35.0f;      
+const float BATAS_GERAK_ACCEL_G = 0.50f; 
 
-const unsigned long DURASI_PERINGATAN_MS = 4000UL; 
+const unsigned long DURASI_PERINGATAN_MS = 5000UL; 
 const unsigned long DURASI_BASELINE_MS = 3000UL;   
 const unsigned long INTERVAL_BACA_MS = 66UL; // ~15 Hz
 const int JUMLAH_KALIBRASI = 50; 
 
-const unsigned long DURASI_TUNDA_KUNING_MS = 600UL; 
+const unsigned long DURASI_TUNDA_KUNING_MS = 500UL; 
 unsigned long mulaiPotensiKuning = 0;
 bool potensiKuningBerlangsung = false;
 
