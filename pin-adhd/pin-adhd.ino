@@ -4,7 +4,7 @@
 #include <WebServer.h>
 
 // =====================================================
-// ESP32-C3 + MPU6050 + Clean Modern UI/UX Dashboard (Tanpa Motor)
+// ESP32-C3 + MPU6050 + Sensitivitas Ditingkatkan (Responsif)
 // SDA = GPIO 6, SCL = GPIO 7
 // Sensor Address = 0x68
 // =====================================================
@@ -20,13 +20,13 @@ const int PIN_LED_MERAH  = 0;
 const int PIN_LED_KUNING = 1;
 const int PIN_LED_HIJAU  = 3;
 
-// Ambang batas
-const float BATAS_SUDUT_POSTUR = 40.0f;  
-const float BATAS_GYRO_DPS = 35.0f;      
-const float BATAS_GERAK_ACCEL_G = 0.50f; 
+// --- AMBANG BATAS DITURUNKAN AGAR LEBIH SENSITIF & PEKA ---
+const float BATAS_SUDUT_POSTUR = 30.0f;  // Lebih peka terhadap kemungkukan badan (membungkuk/miring)
+const float BATAS_GYRO_DPS = 15.0f;      // Lebih peka terhadap rotasi/gerakan badan cepat
+const float BATAS_GERAK_ACCEL_G = 0.30f; // Lebih peka terhadap guncangan/pergerakan fisik
 
-const unsigned long DURASI_PERINGATAN_MS = 5000UL; 
-const unsigned long DURASI_BASELINE_MS = 3000UL;   
+const unsigned long DURASI_PERINGATAN_MS = 2000UL; // Respons lebih cepat (1.5 detik)
+const unsigned long DURASI_BASELINE_MS = 5000UL;   // Butuh waktu lebih lama untuk menganggap posisi baru sebagai normal
 const unsigned long INTERVAL_BACA_MS = 66UL; // ~15 Hz
 const int JUMLAH_KALIBRASI = 50; 
 
@@ -34,7 +34,7 @@ const unsigned long DURASI_TUNDA_KUNING_MS = 500UL;
 unsigned long mulaiPotensiKuning = 0;
 bool potensiKuningBerlangsung = false;
 
-// --- LOGIKA PENAHAN 3 DETIK SAAT MERAH ---
+// --- LOGIKA PENAHAN SAAT MERAH ---
 unsigned long waktuMulaiMerah = 0;
 bool sedangMenahanMerah = false;
 const unsigned long DURASI_TAHAN_MERAH_MS = 3000UL;
@@ -58,14 +58,14 @@ String statusLEDGlobal = "HIJAU";
 String statusKeteranganGlobal = "Aman";
 bool imuErrorGlobal = false;
 
-// Variabel Smoothing Filter (EMA)
+// Variabel Smoothing Filter (EMA) - Dibuat sedikit lebih responsif
 float prevAx = 0, prevAy = 0, prevAz = 1.0f;
 float prevGx = 0, prevGy = 0, prevGz = 0;
 float filteredPitch = 0.0f;
 float filteredRoll = 0.0f;
 
-const float FILTER_ALPHA_RAW = 0.2f;  
-const float FILTER_ALPHA_ANGLE = 0.25f; 
+const float FILTER_ALPHA_RAW = 0.3f;  
+const float FILTER_ALPHA_ANGLE = 0.35f; 
 
 struct DataIMU {
   int16_t axRaw, ayRaw, azRaw;
@@ -91,18 +91,13 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Plus Jakarta Sans', sans-serif; }
     body { background-color: #f1f5f9; color: #1e293b; padding: 24px; display: flex; justify-content: center; }
-    
     .container { width: 100%; max-width: 700px; }
-    
-    /* Header Modern & Clean */
     .header { background: #ffffff; padding: 20px 24px; border-radius: 20px; box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.03); margin-bottom: 20px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
     .header-left h1 { font-size: 1.25rem; font-weight: 700; color: #0f172a; margin-bottom: 2px; }
     .header-left p { font-size: 0.8rem; color: #64748b; }
-    
     .btn-calibrate { background: #0f172a; color: white; border: none; padding: 10px 16px; border-radius: 12px; font-weight: 600; font-size: 0.825rem; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(15,23,42,0.1); }
     .btn-calibrate:hover { background: #334155; transform: translateY(-1px); }
 
-    /* Pop-up Penuh Layar untuk Status Merah */
     #fullscreen-alert {
       position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
       background: rgba(239, 68, 68, 0.96); z-index: 9998;
@@ -111,10 +106,9 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
       backdrop-filter: blur(8px);
     }
     #fullscreen-alert.active { opacity: 1; pointer-events: auto; }
-    #fullscreen-alert h2 { font-size: 2.75rem; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.5px; }
+    #fullscreen-alert h2 { font-size: 2.75rem; font-weight: 700; margin-bottom: 8px; }
     #fullscreen-alert p { font-size: 1.1rem; font-weight: 500; opacity: 0.95; }
 
-    /* Pop-up Selesai Pembelajaran */
     #finish-modal {
       position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
       background: rgba(15, 23, 42, 0.7); z-index: 9999;
@@ -129,23 +123,19 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
     .modal-card button { padding: 12px 24px; background: #2563eb; color: white; border: none; border-radius: 12px; font-weight: 600; cursor: pointer; width: 100%; transition: background 0.2s; }
     .modal-card button:hover { background: #1d4ed8; }
 
-    /* Kartu Status Utama */
     .card-status { background: #ffffff; padding: 28px; border-radius: 20px; box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.03); margin-bottom: 20px; border: 1px solid #e2e8f0; text-align: center; }
     .status-badge { display: inline-block; padding: 6px 16px; border-radius: 9999px; font-weight: 600; font-size: 0.75rem; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
     .status-HIJAU { background: #dcfce7; color: #166534; }
     .status-KUNING { background: #fef9c3; color: #854d0e; }
     .status-MERAH { background: #fee2e2; color: #991b1b; }
-    
     .status-desc { font-size: 1.75rem; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
     .status-sub { font-size: 0.9rem; color: #64748b; }
 
-    /* Grid Kartu Informasi */
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
     .card { background: #ffffff; padding: 20px; border-radius: 20px; box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.03); border: 1px solid #e2e8f0; }
     .card h3 { font-size: 0.75rem; font-weight: 600; color: #64748b; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.05em; }
     .card .val { font-size: 2rem; font-weight: 700; color: #0f172a; }
 
-    /* Sesi Fokus Belajar (Timer di Tengah) */
     .timer-card { background: #ffffff; padding: 28px; border-radius: 20px; box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.03); border: 1px solid #e2e8f0; margin-bottom: 20px; text-align: center; }
     .timer-card h3 { font-size: 0.75rem; font-weight: 600; color: #64748b; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.05em; }
     .timer-display { font-size: 3.5rem; font-weight: 700; color: #2563eb; margin-bottom: 16px; letter-spacing: -1.5px; }
@@ -156,29 +146,24 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
     .btn-secondary { background: #f1f5f9 !important; color: #475569 !important; }
     .btn-secondary:hover { background: #e2e8f0 !important; }
 
-    /* Sektor Status Perangkat (Hardware Status) */
     .device-status-card { background: #ffffff; padding: 20px 24px; border-radius: 20px; box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.03); border: 1px solid #e2e8f0; margin-bottom: 20px; }
     .device-status-card h3 { font-size: 0.75rem; font-weight: 600; color: #64748b; text-transform: uppercase; margin-bottom: 14px; letter-spacing: 0.05em; }
     .status-list { display: flex; flex-direction: column; gap: 10px; }
     .status-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: #f8fafc; border-radius: 12px; border: 1px solid #f1f5f9; font-size: 0.875rem; font-weight: 500; }
-    
     .badge-status { padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
     .bg-online { background: #dcfce7; color: #166534; }
     .bg-offline { background: #fee2e2; color: #991b1b; }
     .bg-active { background: #dbeafe; color: #1e40af; }
-
     .footer { text-align: center; font-size: 0.75rem; color: #94a3b8; margin-top: 24px; }
   </style>
 </head>
 <body>
 
-  <!-- POP-UP LAYAR PENUH SAAT MERAH -->
   <div id="fullscreen-alert">
     <h2>⚠️ PERINGATAN!</h2>
     <p>Banyak Gerakan Terdeteksi! Harap Tenang.</p>
   </div>
 
-  <!-- POP-UP SELESAI PEMBELAJARAN -->
   <div id="finish-modal">
     <div class="modal-card">
       <h2>🎉 Selesai!</h2>
@@ -188,7 +173,6 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
   </div>
 
   <div class="container">
-    <!-- HEADER -->
     <div class="header">
       <div class="header-left">
         <h1>Smart Pin</h1>
@@ -197,14 +181,12 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
       <button class="btn-calibrate" onclick="kirimKalibrasi()">Set Posisi Ideal</button>
     </div>
 
-    <!-- KARTU STATUS UTAMA -->
     <div class="card-status">
       <div id="badge" class="status-badge status-HIJAU">Status Sistem</div>
       <div id="status-desc" class="status-desc">Aman</div>
       <div id="status-sub" class="status-sub">Postur dan gerakan anak stabil</div>
     </div>
 
-    <!-- GRID INFO -->
     <div class="grid">
       <div class="card">
         <h3>Total Pelanggaran</h3>
@@ -216,7 +198,6 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
       </div>
     </div>
 
-    <!-- TIMER FOKUS BELAJAR -->
     <div class="timer-card">
       <h3>Waktu Fokus Belajar</h3>
       <div class="timer-display" id="timer-display">25:00</div>
@@ -228,7 +209,6 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
       </div>
     </div>
 
-    <!-- STATUS HARDWARE (DIBAWAH) -->
     <div class="device-status-card">
       <h3>Status Perangkat & Komponen</h3>
       <div class="status-list">
@@ -313,9 +293,7 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
       const inputVal = parseInt(document.getElementById('input-menit').value);
       durasiAwalMenit = inputVal;
       sisaWaktuDetik = inputVal * 60;
-      
       fetch('/reset-timer');
-
       timerBerjalan = true;
       timerInterval = setInterval(() => {
         if (sisaWaktuDetik > 0) {
@@ -340,11 +318,7 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
     }
 
     function kirimKalibrasi() {
-      fetch('/calibrate')
-        .then(res => {
-          if(res.ok) alert("Posisi ideal berhasil disimpan!");
-        })
-        .catch(err => alert("Gagal mengatur posisi ideal"));
+      fetch('/calibrate').then(res => { if(res.ok) alert("Posisi ideal berhasil disimpan!"); });
     }
 
     function tampilkanModalSelesai() {
@@ -362,27 +336,20 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
       resetTimer();
     }
 
-    // Fetch data real-time dari ESP32 setiap 400ms
     setInterval(() => {
       fetch('/data')
         .then(res => res.json())
         .then(d => {
-          // Status Wifi Online
-          const elWifi = document.getElementById('st-wifi');
-          elWifi.className = "badge-status bg-online";
-          elWifi.innerText = "Terhubung";
+          document.getElementById('st-wifi').className = "badge-status bg-online";
+          document.getElementById('st-wifi').innerText = "Terhubung";
 
-          // Status IMU
           const elImu = document.getElementById('st-imu');
           if (d.imuErr) {
-            elImu.className = "badge-status bg-offline";
-            elImu.innerText = "Error / Disconnected";
+            elImu.className = "badge-status bg-offline"; elImu.innerText = "Error / Disconnected";
           } else {
-            elImu.className = "badge-status bg-online";
-            elImu.innerText = "Normal";
+            elImu.className = "badge-status bg-online"; elImu.innerText = "Normal";
           }
 
-          // Status LED 1 (Merah), LED 2 (Kuning), LED 3 (Hijau)
           const elLed1 = document.getElementById('st-led1');
           const elLed2 = document.getElementById('st-led2');
           const elLed3 = document.getElementById('st-led3');
@@ -435,7 +402,6 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
           }
         })
         .catch(err => {
-          // Jika koneksi ESP32 terputus
           document.getElementById('st-wifi').className = "badge-status bg-offline";
           document.getElementById('st-wifi').innerText = "Terputus";
         });
@@ -457,13 +423,9 @@ bool bacaRegister(uint8_t reg, uint8_t *buffer, uint8_t panjang) {
   Wire.beginTransmission(IMU_ADDR);
   Wire.write(reg);
   if (Wire.endTransmission(false) != 0) return false;
-
   uint8_t jumlah = Wire.requestFrom(IMU_ADDR, panjang);
   if (jumlah != panjang) return false;
-
-  for (uint8_t i = 0; i < panjang; i++) {
-    buffer[i] = Wire.read();
-  }
+  for (uint8_t i = 0; i < panjang; i++) buffer[i] = Wire.read();
   return true;
 }
 
@@ -482,7 +444,6 @@ bool bacaIMU(DataIMU &d) {
   d.axRaw = gabungInt16(b[0], b[1]);
   d.ayRaw = gabungInt16(b[2], b[3]);
   d.azRaw = gabungInt16(b[4], b[5]);
-
   d.gxRaw = gabungInt16(b[8], b[9]);
   d.gyRaw = gabungInt16(b[10], b[11]);
   d.gzRaw = gabungInt16(b[12], b[13]);
@@ -490,7 +451,6 @@ bool bacaIMU(DataIMU &d) {
   float rawAx = d.axRaw * (1.0f / 16384.0f);
   float rawAy = d.ayRaw * (1.0f / 16384.0f);
   float rawAz = d.azRaw * (1.0f / 16384.0f);
-
   float rawGx = d.gxRaw * (1.0f / 131.0f);
   float rawGy = d.gyRaw * (1.0f / 131.0f);
   float rawGz = d.gzRaw * (1.0f / 131.0f);
@@ -498,7 +458,6 @@ bool bacaIMU(DataIMU &d) {
   d.ax = (FILTER_ALPHA_RAW * rawAx) + ((1.0f - FILTER_ALPHA_RAW) * prevAx);
   d.ay = (FILTER_ALPHA_RAW * rawAy) + ((1.0f - FILTER_ALPHA_RAW) * prevAy);
   d.az = (FILTER_ALPHA_RAW * rawAz) + ((1.0f - FILTER_ALPHA_RAW) * prevAz);
-
   d.gx = (FILTER_ALPHA_RAW * rawGx) + ((1.0f - FILTER_ALPHA_RAW) * prevGx);
   d.gy = (FILTER_ALPHA_RAW * rawGy) + ((1.0f - FILTER_ALPHA_RAW) * prevGy);
   d.gz = (FILTER_ALPHA_RAW * rawGz) + ((1.0f - FILTER_ALPHA_RAW) * prevGz);
@@ -522,7 +481,6 @@ bool bacaIMU(DataIMU &d) {
 
   d.pitch = filteredPitch;
   d.roll  = filteredRoll;
-
   return true;
 }
 
@@ -541,7 +499,6 @@ void kalibrasiAwal() {
   float jumlahPitch = 0.0f;
   float jumlahRoll = 0.0f;
   int berhasil = 0;
-
   while (berhasil < JUMLAH_KALIBRASI) {
     DataIMU d;
     if (bacaIMU(d)) {
@@ -551,15 +508,11 @@ void kalibrasiAwal() {
     }
     delay(50);
   }
-
   baselinePitch = jumlahPitch / berhasil;
   baselineRoll = jumlahRoll / berhasil;
 }
 
-void handleRoot() {
-  server.send(200, "text/html", HTML_DASHBOARD);
-}
-
+void handleRoot() { server.send(200, "text/html", HTML_DASHBOARD); }
 void handleDataJSON() {
   String json = "{";
   json += "\"ledStatus\":\"" + statusLEDGlobal + "\",";
@@ -569,17 +522,8 @@ void handleDataJSON() {
   json += "}";
   server.send(200, "application/json", json);
 }
-
-void handleResetTimer() {
-  jumlahMerahTotal = 0; 
-  server.send(200, "text/plain", "OK");
-}
-
-void handleCalibrate() {
-  baselinePitch = lastDataIMU.pitch;
-  baselineRoll = lastDataIMU.roll;
-  server.send(200, "text/plain", "OK");
-}
+void handleResetTimer() { jumlahMerahTotal = 0; server.send(200, "text/plain", "OK"); }
+void handleCalibrate() { baselinePitch = lastDataIMU.pitch; baselineRoll = lastDataIMU.roll; server.send(200, "text/plain", "OK"); }
 
 void setup() {
   pinMode(PIN_LED_MERAH, OUTPUT);
@@ -689,7 +633,7 @@ void loop() {
 
   bool syaratWaktuKuning = potensiKuningBerlangsung && (sekarang - mulaiPotensiKuning >= DURASI_TUNDA_KUNING_MS);
 
-  // --- LOGIKA PENAHAN 3 DETIK SAAT MERAH ---
+  // --- LOGIKA PENAHAN SAAT MERAH ---
   bool kondisiMerahMentah = gerakLebihPeringatan || posturMenyimpangLebihPeringatan;
 
   if (kondisiMerahMentah) {
@@ -725,7 +669,7 @@ void loop() {
 
   if (ledMerah) {
     statusLEDGlobal = "MERAH";
-    statusKeteranganGlobal = "Banyak Gerakan";
+    statusKeteranganGlobal = "Banyak Gerakan / Gelisah";
   } else if (ledKuning) {
     statusLEDGlobal = "KUNING";
     statusKeteranganGlobal = "Berubah Posisi";
