@@ -63,6 +63,7 @@ float prevAx = 0, prevAy = 0, prevAz = 1.0f;
 float prevGx = 0, prevGy = 0, prevGz = 0;
 float filteredPitch = 0.0f;
 float filteredRoll = 0.0f;
+bool filterSiap = false; // false = bacaan pertama dipakai langsung sebagai nilai awal filter
 
 const float FILTER_ALPHA_RAW = 0.3f;  
 const float FILTER_ALPHA_ANGLE = 0.35f; 
@@ -342,14 +343,24 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
       fetch(`/update-settings?sudut=${sudut}&gyro=${gyro}&accel=${accel}`)
         .then(res => {
           if (res.ok) alert("✅ Sensitivitas berhasil diperbarui!");
-          else alert("Gagal menyimpan pengaturan.");
+          else alert("Gagal menyimpan: nilai harus angka lebih dari 0.");
         })
         .catch(err => alert("Terjadi kesalahan koneksi."));
     }
 
+    // Satu AudioContext dipakai bersama; browser hanya mengizinkan suara setelah ada interaksi pengguna
+    let audioCtx = null;
+    function getAudioCtx() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
+    }
+    ['pointerdown', 'keydown'].forEach(ev =>
+      document.addEventListener(ev, () => { try { getAudioCtx(); } catch (e) {} }, { once: true }));
+
     function playAlarmSound() {
       try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const ctx = getAudioCtx();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sawtooth';
@@ -366,7 +377,7 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
 
     function playFinishSound() {
       try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const ctx = getAudioCtx();
         const now = ctx.currentTime;
         [523.25, 659.25, 783.99, 1046.50].forEach((freq, i) => {
           const osc = ctx.createOscillator();
@@ -555,6 +566,11 @@ bool bacaIMU(DataIMU &d) {
   float rawGy = d.gyRaw * (1.0f / 131.0f);
   float rawGz = d.gzRaw * (1.0f / 131.0f);
 
+  if (!filterSiap) {
+    prevAx = rawAx; prevAy = rawAy; prevAz = rawAz;
+    prevGx = rawGx; prevGy = rawGy; prevGz = rawGz;
+  }
+
   d.ax = (FILTER_ALPHA_RAW * rawAx) + ((1.0f - FILTER_ALPHA_RAW) * prevAx);
   d.ay = (FILTER_ALPHA_RAW * rawAy) + ((1.0f - FILTER_ALPHA_RAW) * prevAy);
   d.az = (FILTER_ALPHA_RAW * rawAz) + ((1.0f - FILTER_ALPHA_RAW) * prevAz);
@@ -571,9 +587,10 @@ bool bacaIMU(DataIMU &d) {
   float rawPitch = atan2f(d.ay, sqrtf(d.ax*d.ax + d.az*d.az)) * (180.0f / 3.14159265f);
   float rawRoll  = atan2f(-d.ax, d.az) * (180.0f / 3.14159265f);
 
-  if (filteredPitch == 0.0f && filteredRoll == 0.0f) {
+  if (!filterSiap) {
     filteredPitch = rawPitch;
     filteredRoll = rawRoll;
+    filterSiap = true;
   } else {
     filteredPitch = (FILTER_ALPHA_ANGLE * rawPitch) + ((1.0f - FILTER_ALPHA_ANGLE) * filteredPitch);
     filteredRoll  = (FILTER_ALPHA_ANGLE * rawRoll)  + ((1.0f - FILTER_ALPHA_ANGLE) * filteredRoll);
@@ -599,7 +616,8 @@ void kalibrasiAwal() {
   float jumlahPitch = 0.0f;
   float jumlahRoll = 0.0f;
   int berhasil = 0;
-  while (berhasil < JUMLAH_KALIBRASI) {
+  // Batasi percobaan agar boot tidak macet saat IMU tidak terpasang (dashboard tetap bisa dibuka)
+  for (int coba = 0; coba < JUMLAH_KALIBRASI * 2 && berhasil < JUMLAH_KALIBRASI; coba++) {
     DataIMU d;
     if (bacaIMU(d)) {
       jumlahPitch += d.pitch;
@@ -608,6 +626,7 @@ void kalibrasiAwal() {
     }
     delay(50);
   }
+  if (berhasil == 0) return; // baseline tetap 0, bisa diulang lewat tombol "Set Posisi Ideal"
   baselinePitch = jumlahPitch / berhasil;
   baselineRoll = jumlahRoll / berhasil;
 }
@@ -633,10 +652,24 @@ void handleGetSettings() {
   server.send(200, "application/json", json);
 }
 
+// Nilai kosong / bukan angka / di luar (0, 1000) ditolak (toFloat() mengembalikan 0 -> LED merah terus)
+bool ambilAngkaPositif(const char *nama, float &hasil) {
+  if (!server.hasArg(nama)) return true;
+  float v = server.arg(nama).toFloat();
+  if (!(v > 0.0f && v < 1000.0f)) return false; // sekaligus menolak NaN/inf
+  hasil = v;
+  return true;
+}
+
 void handleUpdateSettings() {
-  if (server.hasArg("sudut")) batasSudutPostur = server.arg("sudut").toFloat();
-  if (server.hasArg("gyro")) batasGyroDps = server.arg("gyro").toFloat();
-  if (server.hasArg("accel")) batasGerakAccelG = server.arg("accel").toFloat();
+  float sudut = batasSudutPostur, gyro = batasGyroDps, accel = batasGerakAccelG;
+  if (!ambilAngkaPositif("sudut", sudut) || !ambilAngkaPositif("gyro", gyro) || !ambilAngkaPositif("accel", accel)) {
+    server.send(400, "text/plain", "Nilai harus angka lebih dari 0");
+    return;
+  }
+  batasSudutPostur = sudut;
+  batasGyroDps = gyro;
+  batasGerakAccelG = accel;
   server.send(200, "text/plain", "OK");
 }
 
@@ -690,7 +723,7 @@ void loop() {
   if (!bacaIMU(d)) {
     setLED(true, false, false);
     statusLEDGlobal = "MERAH";
-    statusKeteranganGlobal = "Banyak Gerakan";
+    statusKeteranganGlobal = "Sensor IMU Error";
     return;
   }
 
