@@ -165,17 +165,6 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
     .bg-offline { background: #fee2e2; color: #991b1b; }
     .bg-active { background: #dbeafe; color: #1e40af; }
 
-    #fullscreen-alert {
-      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-      background: rgba(239, 68, 68, 0.96); z-index: 9998;
-      display: flex; flex-direction: column; justify-content: center; align-items: center;
-      color: white; opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
-      backdrop-filter: blur(8px); text-align: center; padding: 20px;
-    }
-    #fullscreen-alert.active { opacity: 1; pointer-events: auto; }
-    #fullscreen-alert h2 { font-size: 3rem; font-weight: 700; margin-bottom: 12px; }
-    #fullscreen-alert p { font-size: 1.25rem; font-weight: 500; opacity: 0.95; }
-
     #finish-modal {
       position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
       background: rgba(15, 23, 42, 0.7); z-index: 9999;
@@ -194,11 +183,6 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
   </style>
 </head>
 <body>
-
-  <div id="fullscreen-alert">
-    <h2>⚠️ PERINGATAN!</h2>
-    <p>Banyak Gerakan / Postur Tidak Stabil Terdeteksi!</p>
-  </div>
 
   <div id="finish-modal">
     <div class="modal-card">
@@ -486,7 +470,6 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
           const badge = document.getElementById('badge');
           const desc = document.getElementById('status-desc');
           const sub = document.getElementById('status-sub');
-          const alertScreen = document.getElementById('fullscreen-alert');
           const countMerah = document.getElementById('count-merah');
 
           badge.className = "status-badge status-" + d.ledStatus;
@@ -496,16 +479,12 @@ const char HTML_DASHBOARD[] PROGMEM = R"rawliteral(
 
           if (d.ledStatus === "HIJAU") {
             sub.innerText = "Postur dan gerakan anak stabil.";
-            alertScreen.classList.remove('active');
             statusMerahSebelumnyaWeb = false;
           } else if (d.ledStatus === "KUNING") {
             sub.innerText = "Anak sedang mengubah posisi duduk/berdiri.";
-            alertScreen.classList.remove('active');
             statusMerahSebelumnyaWeb = false;
           } else if (d.ledStatus === "MERAH") {
             sub.innerText = "Peringatan: Aktivitas fisik berlebihan terdeteksi!";
-            alertScreen.classList.add('active');
-            
             if (!statusMerahSebelumnyaWeb) {
               playAlarmSound();
               statusMerahSebelumnyaWeb = true;
